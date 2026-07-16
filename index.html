@@ -70,6 +70,7 @@
     <div class="kpi"><strong id="kTotal">—</strong><span>Centres prévus</span></div>
     <div class="kpi"><strong id="kLivres">—</strong><span>Centres livrés</span></div>
     <div class="kpi"><strong id="kRestants">—</strong><span>Centres restants</span></div>
+    <div class="kpi"><strong id="kIrregularites">—</strong><span>Irrégularités GPS</span></div>
     <div class="kpi"><strong id="kProgression">—</strong><span>Progression</span></div>
   </section>
 
@@ -85,7 +86,7 @@
 
     <div class="field" style="margin-top:12px">
       <label for="qrManuel">Ou saisir le code manuellement</label>
-      <input id="qrManuel" placeholder="ELECTIONS2026|CV|1010">
+      <input id="qrManuel" placeholder="Scannez le QR du centre">
     </div>
 
     <button class="btn btn-primary" onclick="rechercherQrManuel()">
@@ -119,11 +120,6 @@
     </div>
 
     <div class="field">
-      <label>Nombre de kits livrés</label>
-      <input id="nbKitsLivres" type="number" min="0">
-    </div>
-
-    <div class="field">
       <label>Nom du réceptionnaire</label>
       <input id="nomReceptionnaire">
     </div>
@@ -151,7 +147,7 @@
 </div>
 
 <script>
-  const API_URL = 'https://script.google.com/macros/s/AKfycbw7_ugjY1R7EJ_MOQPC-6G7o3ifmNk7Mo80BONCdRMcQjxGRwJ2Bgrof_GbHH-aACoC/exec';
+  const API_URL = 'https://script.google.com/macros/s/AKfycbxTV3lf-h7rES9t_XiomZ-MfmHRd2mRGvP7P0JVCs5MEiWfEZgsIN2HOPdit4_14Y2a9A/exec';
 
   let scanner = null;
   let qrActuel = '';
@@ -176,7 +172,7 @@
         const db = event.target.result;
 
         if (!db.objectStoreNames.contains(STORE_CENTRES)) {
-          db.createObjectStore(STORE_CENTRES, { keyPath: 'codeCentre' });
+          db.createObjectStore(STORE_CENTRES, { keyPath: 'cleCentre' });
         }
 
         if (!db.objectStoreNames.contains(STORE_QUEUE)) {
@@ -206,12 +202,12 @@
     });
   }
 
-  async function lireCentreLocal(codeCentre) {
+  async function lireCentreLocal(cleCentre) {
     const db = await ouvrirDb();
 
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_CENTRES, 'readonly');
-      const request = tx.objectStore(STORE_CENTRES).get(codeCentre);
+      const request = tx.objectStore(STORE_CENTRES).get(cleCentre);
 
       request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error);
@@ -261,10 +257,20 @@
     if (!navigator.onLine) return;
 
     try {
-      const data = await jsonp('centres');
+      const data = await jsonp('centres_scan');
 
       if (data.ok && Array.isArray(data.centres)) {
-        await sauvegarderCentresLocalement(data.centres);
+        const centresAvecCle = data.centres.map(centre => ({
+          ...centre,
+          cleCentre: centre.cleCentre || construireCleLocale(
+            centre.nomCentre,
+            centre.departement,
+            centre.commune,
+            centre.section
+          )
+        }));
+
+        await sauvegarderCentresLocalement(centresAvecCle);
       }
     } catch (err) {
       console.warn('Référentiel local non actualisé :', err);
@@ -279,7 +285,7 @@
     for (const item of file) {
       try {
         const { localId, queuedAt, ...params } = item;
-        const reponse = await jsonp('save', params);
+        const reponse = await jsonp('save_scan', params);
 
         if (reponse.ok) {
           await supprimerDeLaFile(localId);
@@ -310,6 +316,76 @@
     }
   }
 
+
+
+  function analyserQrLocal(valeurQr) {
+    const qr = String(valeurQr || '').trim();
+    const prefixe = 'ELECTIONS2026|';
+
+    if (!qr.startsWith(prefixe)) {
+      return {
+        ok: false,
+        message: 'QR code non reconnu.'
+      };
+    }
+
+    const valeurs = {};
+
+    qr.substring(prefixe.length)
+      .split('|')
+      .forEach(morceau => {
+        const pos = morceau.indexOf('=');
+        if (pos < 1) return;
+
+        const cle = morceau.substring(0, pos).trim().toUpperCase();
+        const valeur = morceau.substring(pos + 1);
+
+        try {
+          valeurs[cle] = decodeURIComponent(valeur).trim();
+        } catch (err) {
+          valeurs[cle] = valeur.trim();
+        }
+      });
+
+    const resultat = {
+      ok: Boolean(
+        valeurs.CENTRE &&
+        valeurs.DEP &&
+        valeurs.COM &&
+        valeurs.SEC
+      ),
+      nomCentre: valeurs.CENTRE || '',
+      departement: valeurs.DEP || '',
+      commune: valeurs.COM || '',
+      section: valeurs.SEC || ''
+    };
+
+    if (!resultat.ok) {
+      resultat.message =
+        'Le QR doit contenir le nom du centre, le département, la commune et la section.';
+    }
+
+    return resultat;
+  }
+
+  function normaliserLocale(valeur) {
+    return String(valeur || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[’‘`´]/g, "'")
+      .replace(/[^a-zA-Z0-9]+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function construireCleLocale(nom, dep, commune, section) {
+    return [
+      normaliserLocale(nom),
+      normaliserLocale(dep),
+      normaliserLocale(commune),
+      normaliserLocale(section)
+    ].join('|');
+  }
 
   document.addEventListener('DOMContentLoaded', () => {
     chargerDashboard();
@@ -361,11 +437,12 @@
 
   async function chargerDashboard() {
     try {
-      const data = await jsonp('dashboard');
+      const data = await jsonp('dashboard_scan');
 
       document.getElementById('kTotal').textContent = data.totalCentres ?? '—';
       document.getElementById('kLivres').textContent = data.centresLivres ?? '—';
       document.getElementById('kRestants').textContent = data.centresRestants ?? '—';
+      document.getElementById('kIrregularites').textContent = data.irregularitesGps ?? 0;
       document.getElementById('kProgression').textContent =
         (data.progression ?? 0) + ' %';
     } catch (err) {
@@ -448,14 +525,19 @@
 
     qrActuel = valeur;
 
-    const prefixe = 'ELECTIONS2026|CV|';
-    const codeCentre = valeur.startsWith(prefixe)
-      ? valeur.substring(prefixe.length).trim()
+    const donneesQr = analyserQrLocal(valeur);
+    const cleCentre = donneesQr.ok
+      ? construireCleLocale(
+          donneesQr.nomCentre,
+          donneesQr.departement,
+          donneesQr.commune,
+          donneesQr.section
+        )
       : '';
 
     try {
       if (navigator.onLine) {
-        const reponse = await jsonp('lookup', { qr: valeur });
+        const reponse = await jsonp('lookup_scan', { qr: valeur });
 
         if (!reponse.ok) {
           afficherMessage(reponse.message, 'danger');
@@ -470,12 +552,12 @@
       console.warn('Recherche serveur impossible, bascule locale.');
     }
 
-    if (!codeCentre) {
-      afficherMessage('QR code non reconnu.', 'danger');
+    if (!donneesQr.ok) {
+      afficherMessage(donneesQr.message, 'danger');
       return;
     }
 
-    const centreLocal = await lireCentreLocal(codeCentre);
+    const centreLocal = await lireCentreLocal(cleCentre);
 
     if (!centreLocal) {
       afficherMessage(
@@ -510,7 +592,8 @@
       '<b>Département :</b> ' + echapper(c.departement) + '<br>' +
       '<b>Commune :</b> ' + echapper(c.commune) + '<br>' +
       '<b>Section :</b> ' + echapper(c.section) + '<br>' +
-      '<b>Bureaux de vote :</b> ' + echapper(c.nbBureauxVote);
+      '<b>Coordonnées de référence :</b> ' +
+      echapper(c.latitude) + ', ' + echapper(c.longitude);
 
     const doublon = document.getElementById('alerteDoublon');
 
@@ -538,7 +621,6 @@
       qr: qrActuel,
       typeOperation: document.getElementById('typeOperation').value,
       livraisonComplete: document.getElementById('livraisonComplete').checked,
-      nbKitsLivres: document.getElementById('nbKitsLivres').value,
       nomReceptionnaire: document.getElementById('nomReceptionnaire').value,
       telephoneReceptionnaire:
         document.getElementById('telephoneReceptionnaire').value,
@@ -563,7 +645,7 @@
     }
 
     try {
-      const reponse = await jsonp('save', params);
+      const reponse = await jsonp('save_scan', params);
 
       if (!reponse.ok) {
         afficherMessage(reponse.message, 'danger');
@@ -574,12 +656,15 @@
         reponse.message +
         (
           reponse.distanceCentreM !== ''
-            ? ' Distance au centre : ' +
+            ? ' Distance au centre de référence : ' +
               reponse.distanceCentreM +
-              ' m.'
-            : ''
+              ' m. Vérification : ' +
+              reponse.verificationLocalisation + '.'
+            : ' GPS non disponible.'
         ),
-        reponse.statutGps === 'HORS ZONE' ? 'warn' : 'ok'
+        reponse.verificationLocalisation === 'CONFORME'
+          ? 'ok'
+          : 'warn'
       );
 
       chargerDashboard();
@@ -606,7 +691,6 @@
     document.getElementById('centreCard').classList.remove('show');
     document.getElementById('nomReceptionnaire').value = '';
     document.getElementById('telephoneReceptionnaire').value = '';
-    document.getElementById('nbKitsLivres').value = '';
     document.getElementById('observation').value = '';
     document.getElementById('livraisonComplete').checked = true;
 
