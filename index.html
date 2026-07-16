@@ -1,0 +1,418 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#0b1f3a">
+  <link rel="manifest" href="manifest.json">
+  <title>Suivi des livraisons électorales</title>
+
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    :root{
+      --navy:#0b1f3a;
+      --blue:#006eb6;
+      --light:#eef3f8;
+      --line:#d7e0ea;
+      --ok:#168a4a;
+      --warn:#b87900;
+      --danger:#c6283d;
+      --text:#152238;
+      --muted:#617087;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,sans-serif;background:var(--light);color:var(--text)}
+    header{background:linear-gradient(135deg,var(--navy),#16456f);color:white;padding:18px}
+    header h1{margin:0;font-size:20px}
+    header p{margin:5px 0 0;font-size:12px;opacity:.78}
+    .container{max-width:760px;margin:0 auto;padding:16px}
+    .dashboard{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
+    .kpi,.card{background:white;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 22px rgba(11,31,58,.07)}
+    .kpi{padding:13px}
+    .kpi strong{display:block;font-size:24px;color:var(--navy)}
+    .kpi span{font-size:11px;color:var(--muted)}
+    .card{padding:16px;margin-bottom:14px}
+    .card h2{font-size:15px;margin:0 0 12px}
+    #reader{width:100%;overflow:hidden;border-radius:12px}
+    .btn{width:100%;border:0;border-radius:10px;padding:12px 14px;font-weight:bold;cursor:pointer;margin-top:10px}
+    .btn-primary{background:var(--blue);color:white}
+    .btn-secondary{background:white;color:var(--navy);border:1px solid var(--line)}
+    .field{margin-bottom:12px}
+    label{display:block;font-size:12px;font-weight:bold;margin-bottom:5px}
+    input,select,textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:11px;font-size:14px;background:white}
+    textarea{min-height:75px;resize:vertical}
+    .centre{display:none}.centre.show{display:block}
+    .centre-title{font-size:18px;font-weight:bold;color:var(--navy);margin-bottom:8px}
+    .meta{font-size:13px;line-height:1.6;color:var(--muted)}
+    .alert{display:none;padding:11px;border-radius:9px;margin-bottom:12px;font-size:13px}
+    .alert.show{display:block}
+    .alert-ok{background:#e8f6ee;color:var(--ok)}
+    .alert-warn{background:#fff4dc;color:#8a5c00}
+    .alert-danger{background:#fdebed;color:var(--danger)}
+    .status-line{margin-top:10px;font-size:12px;color:var(--muted)}
+  </style>
+</head>
+<body>
+<header>
+  <h1>Suivi des livraisons électorales</h1>
+  <p>Scan QR par centre de vote</p>
+</header>
+
+<div class="container">
+  <section class="dashboard">
+    <div class="kpi"><strong id="kTotal">—</strong><span>Centres prévus</span></div>
+    <div class="kpi"><strong id="kLivres">—</strong><span>Centres livrés</span></div>
+    <div class="kpi"><strong id="kRestants">—</strong><span>Centres restants</span></div>
+    <div class="kpi"><strong id="kProgression">—</strong><span>Progression</span></div>
+  </section>
+
+  <div id="message" class="alert"></div>
+
+  <section class="card">
+    <h2>1. Scanner le QR code</h2>
+    <div id="reader"></div>
+
+    <button class="btn btn-secondary" onclick="demarrerScanner()">
+      Démarrer la caméra
+    </button>
+
+    <div class="field" style="margin-top:12px">
+      <label for="qrManuel">Ou saisir le code manuellement</label>
+      <input id="qrManuel" placeholder="ELECTIONS2026|CV|1010">
+    </div>
+
+    <button class="btn btn-primary" onclick="rechercherQrManuel()">
+      Rechercher le centre
+    </button>
+  </section>
+
+  <section id="centreCard" class="card centre">
+    <h2>2. Centre identifié</h2>
+
+    <div id="centreTitre" class="centre-title"></div>
+    <div id="centreMeta" class="meta"></div>
+    <div id="alerteDoublon" class="alert alert-warn"></div>
+
+    <hr style="border:0;border-top:1px solid var(--line);margin:15px 0">
+
+    <div class="field">
+      <label>Type d’opération</label>
+      <select id="typeOperation">
+        <option>Livraison au centre</option>
+        <option>Réception du matériel</option>
+        <option>Contrôle de livraison</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>
+        <input id="livraisonComplete" type="checkbox" style="width:auto;margin-right:6px" checked>
+        Tous les bureaux de vote du centre ont reçu leur matériel
+      </label>
+    </div>
+
+    <div class="field">
+      <label>Nombre de kits livrés</label>
+      <input id="nbKitsLivres" type="number" min="0">
+    </div>
+
+    <div class="field">
+      <label>Nom du réceptionnaire</label>
+      <input id="nomReceptionnaire">
+    </div>
+
+    <div class="field">
+      <label>Téléphone du réceptionnaire</label>
+      <input id="telephoneReceptionnaire" inputmode="tel">
+    </div>
+
+    <div class="field">
+      <label>Observation</label>
+      <textarea id="observation"></textarea>
+    </div>
+
+    <div id="gpsEtat" class="status-line">GPS non encore acquis.</div>
+
+    <button class="btn btn-primary" onclick="enregistrer()">
+      Confirmer la livraison
+    </button>
+
+    <button class="btn btn-secondary" onclick="reinitialiser()">
+      Scanner un autre centre
+    </button>
+  </section>
+</div>
+
+<script>
+  const API_URL = 'REMPLACER_PAR_URL_APPS_SCRIPT_EXEC';
+
+  let scanner = null;
+  let qrActuel = '';
+  let centreActuel = null;
+  let positionGps = {
+    latitude: '',
+    longitude: '',
+    precisionGps: ''
+  };
+
+  document.addEventListener('DOMContentLoaded', () => {
+    chargerDashboard();
+    obtenirGps();
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js').catch(console.error);
+    }
+  });
+
+  function jsonp(action, params = {}) {
+    return new Promise((resolve, reject) => {
+      const callback = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+      const script = document.createElement('script');
+
+      const query = new URLSearchParams({
+        action,
+        callback,
+        ...params
+      });
+
+      window[callback] = data => {
+        resolve(data);
+        delete window[callback];
+        script.remove();
+      };
+
+      script.onerror = () => {
+        reject(new Error('Impossible de joindre le serveur.'));
+        delete window[callback];
+        script.remove();
+      };
+
+      script.src = API_URL + '?' + query.toString();
+      document.body.appendChild(script);
+    });
+  }
+
+  async function chargerDashboard() {
+    try {
+      const data = await jsonp('dashboard');
+
+      document.getElementById('kTotal').textContent = data.totalCentres ?? '—';
+      document.getElementById('kLivres').textContent = data.centresLivres ?? '—';
+      document.getElementById('kRestants').textContent = data.centresRestants ?? '—';
+      document.getElementById('kProgression').textContent =
+        (data.progression ?? 0) + ' %';
+    } catch (err) {
+      afficherMessage(err.message, 'danger');
+    }
+  }
+
+  function obtenirGps() {
+    const el = document.getElementById('gpsEtat');
+
+    if (!navigator.geolocation) {
+      el.textContent = 'GPS non pris en charge par cet appareil.';
+      return;
+    }
+
+    el.textContent = 'Acquisition GPS en cours…';
+
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        positionGps = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          precisionGps: Math.round(position.coords.accuracy)
+        };
+
+        el.textContent =
+          'GPS acquis — précision : ' +
+          positionGps.precisionGps +
+          ' m';
+      },
+      erreur => {
+        el.textContent = 'GPS indisponible : ' + erreur.message;
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0
+      }
+    );
+  }
+
+  function demarrerScanner() {
+    masquerMessage();
+
+    if (scanner) return;
+
+    scanner = new Html5Qrcode('reader');
+
+    scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      texte => {
+        scanner.stop().then(() => {
+          scanner = null;
+        });
+
+        traiterQr(texte);
+      },
+      () => {}
+    ).catch(err => {
+      afficherMessage(
+        'Impossible d’ouvrir la caméra : ' + err,
+        'danger'
+      );
+      scanner = null;
+    });
+  }
+
+  function rechercherQrManuel() {
+    traiterQr(
+      document.getElementById('qrManuel').value.trim()
+    );
+  }
+
+  async function traiterQr(valeur) {
+    if (!valeur) {
+      afficherMessage('Aucun QR code fourni.', 'danger');
+      return;
+    }
+
+    qrActuel = valeur;
+
+    try {
+      const reponse = await jsonp('lookup', { qr: valeur });
+
+      if (!reponse.ok) {
+        afficherMessage(reponse.message, 'danger');
+        return;
+      }
+
+      centreActuel = reponse.centre;
+      afficherCentre(reponse);
+
+    } catch (err) {
+      afficherMessage(err.message, 'danger');
+    }
+  }
+
+  function afficherCentre(reponse) {
+    const c = reponse.centre;
+
+    document.getElementById('centreTitre').textContent =
+      c.codeCentre + ' — ' + c.nomCentre;
+
+    document.getElementById('centreMeta').innerHTML =
+      '<b>Département :</b> ' + echapper(c.departement) + '<br>' +
+      '<b>Commune :</b> ' + echapper(c.commune) + '<br>' +
+      '<b>Section :</b> ' + echapper(c.section) + '<br>' +
+      '<b>Bureaux de vote :</b> ' + echapper(c.nbBureauxVote);
+
+    const doublon = document.getElementById('alerteDoublon');
+
+    if (reponse.dejaLivre) {
+      doublon.textContent =
+        'Attention : ce centre possède déjà une livraison complète enregistrée.';
+      doublon.classList.add('show');
+    } else {
+      doublon.classList.remove('show');
+    }
+
+    document.getElementById('centreCard').classList.add('show');
+    document.getElementById('centreCard').scrollIntoView({
+      behavior: 'smooth'
+    });
+  }
+
+  async function enregistrer() {
+    if (!centreActuel || !qrActuel) {
+      afficherMessage('Aucun centre sélectionné.', 'danger');
+      return;
+    }
+
+    const params = {
+      qr: qrActuel,
+      typeOperation: document.getElementById('typeOperation').value,
+      livraisonComplete: document.getElementById('livraisonComplete').checked,
+      nbKitsLivres: document.getElementById('nbKitsLivres').value,
+      nomReceptionnaire: document.getElementById('nomReceptionnaire').value,
+      telephoneReceptionnaire:
+        document.getElementById('telephoneReceptionnaire').value,
+      observation: document.getElementById('observation').value,
+      latitude: positionGps.latitude,
+      longitude: positionGps.longitude,
+      precisionGps: positionGps.precisionGps,
+      appareil: navigator.userAgent
+    };
+
+    try {
+      const reponse = await jsonp('save', params);
+
+      if (!reponse.ok) {
+        afficherMessage(reponse.message, 'danger');
+        return;
+      }
+
+      afficherMessage(
+        reponse.message +
+        (
+          reponse.distanceCentreM !== ''
+            ? ' Distance au centre : ' +
+              reponse.distanceCentreM +
+              ' m.'
+            : ''
+        ),
+        reponse.statutGps === 'HORS ZONE' ? 'warn' : 'ok'
+      );
+
+      chargerDashboard();
+
+      setTimeout(reinitialiser, 2500);
+
+    } catch (err) {
+      afficherMessage(err.message, 'danger');
+    }
+  }
+
+  function reinitialiser() {
+    qrActuel = '';
+    centreActuel = null;
+
+    document.getElementById('qrManuel').value = '';
+    document.getElementById('centreCard').classList.remove('show');
+    document.getElementById('nomReceptionnaire').value = '';
+    document.getElementById('telephoneReceptionnaire').value = '';
+    document.getElementById('nbKitsLivres').value = '';
+    document.getElementById('observation').value = '';
+    document.getElementById('livraisonComplete').checked = true;
+
+    obtenirGps();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function afficherMessage(texte, type) {
+    const el = document.getElementById('message');
+    el.textContent = texte;
+    el.className = 'alert show alert-' + type;
+  }
+
+  function masquerMessage() {
+    const el = document.getElementById('message');
+    el.className = 'alert';
+    el.textContent = '';
+  }
+
+  function echapper(valeur) {
+    return String(valeur ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+</script>
+</body>
+</html>
